@@ -518,7 +518,7 @@ getTxTimestamp(NetPath* netPath,TimeInternal* timeStamp) {
 	extern PtpClock *G_ptpClock;
 	ssize_t length;
 	fd_set tmpSet;
-	struct timeval timeOut = {0,0};
+	struct timeval timeOut = {1,0};
 	int val = 1;
 	if(netPath->txTimestampFailure)
 		goto end;
