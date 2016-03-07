@@ -82,6 +82,21 @@ main(int argc, char **argv)
 	Integer16 ret;
 	TimingService *ts;
 
+#ifdef FSL_1588
+	char device[] = "/dev/ptp0";
+	int fd;
+
+	fd = open(device, O_RDWR);
+	if (fd < 0) {
+		fprintf(stderr, "opening %s: %s\n", device, strerror(errno));
+		return -1;
+	}
+	clkid = get_clockid(fd);
+	if (clkid == -1) {
+		fprintf(stderr, "failed to read clock id\n");
+		return -1;
+	}
+#endif
 	startupInProgress = TRUE;
 
 	memset(&timingDomain, 0, sizeof(timingDomain));
