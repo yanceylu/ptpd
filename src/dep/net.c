@@ -38,6 +38,9 @@
  */
 
 #include "../ptpd.h"
+#if defined(FSL_1588)
+#include "../fsl_1588.h"
+#endif
 
 /* choose kernel-level nanoseconds or microseconds resolution on the client-side */
 #if !defined(SO_TIMESTAMPNS) && !defined(SO_TIMESTAMP) && !defined(SO_BINTIME)
@@ -257,6 +260,9 @@ findIface(Octet * ifaceName, UInteger8 * communicationTechnology,
 		PERROR("failed to get ip address");
 		return 0;
 	}
+#if defined(FSL_1588)
+	memcpy(fsl_1588_if_name, ifaceName, IFACE_NAME_LENGTH);
+#endif
 	return ((struct sockaddr_in *)&device[i].ifr_addr)->sin_addr.s_addr;
 
 #else /* usually *BSD */
@@ -418,6 +424,17 @@ netInitTimestamping(NetPath * netPath)
 	int val = 1;
 	Boolean result = TRUE;
 	
+#if defined(FSL_1588)
+	int so_timestamping_flags = 0;
+
+	so_timestamping_flags = SOF_TIMESTAMPING_RX_HARDWARE | SOF_TIMESTAMPING_RAW_HARDWARE;
+	if (setsockopt(netPath->eventSock, SOL_SOCKET, SO_TIMESTAMPING, &so_timestamping_flags, sizeof(so_timestamping_flags)) < 0
+		|| setsockopt(netPath->generalSock, SOL_SOCKET, SO_TIMESTAMPING, &so_timestamping_flags, sizeof(so_timestamping_flags)) < 0) {
+		printf("netInitTimestamping: failed to enable SO_TIMESTAMPING");
+		result = FALSE;
+	}
+
+#else	/* FSL_1588 */
 #if defined(SO_TIMESTAMPNS) /* Linux, Apple */
 	DBG("netInitTimestamping: trying to use SO_TIMESTAMPNS\n");
 	
@@ -437,6 +454,7 @@ netInitTimestamping(NetPath * netPath)
 #else
 	result = FALSE;
 #endif
+#endif	/* FSL_1588 */
 			
 /* fallback method */
 #if defined(SO_TIMESTAMP) /* Linux, Apple, FreeBSD */
@@ -494,6 +512,9 @@ netInit(NetPath * netPath, RunTimeOpts * rtOpts, PtpClock * ptpClock)
 	netPath->interfaceAddr = interfaceAddr;
 	
 	DBG("Local IP address used : %s \n", inet_ntoa(interfaceAddr));
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(&ptpClock->netPath, FALSE);//HWTSTAMP_TX_OFF
+#endif
 
 	temp = 1;			/* allow address reuse */
 	if (setsockopt(netPath->eventSock, SOL_SOCKET, SO_REUSEADDR, 
@@ -591,7 +612,11 @@ netInit(NetPath * netPath, RunTimeOpts * rtOpts, PtpClock * ptpClock)
 	}
 
 	/* enable loopback */
+#if defined(FSL_1588)
+	temp = 0;
+#else
 	temp = 1;
+#endif
 
 	DBG("Going to set IP_MULTICAST_LOOP with %d \n", temp);
 
@@ -677,17 +702,25 @@ netRecvEvent(Octet * buf, TimeInternal * time, NetPath * netPath)
 
 	union {
 		struct cmsghdr cm;
+#if defined(FSL_1588)
+		char	control[3*CMSG_SPACE(sizeof(struct timeval))];
+#else
 		char	control[CMSG_SPACE(sizeof(struct timeval))];
+#endif
 	}     cmsg_un;
 
 	struct cmsghdr *cmsg;
 
+#if defined(FSL_1588)
+	struct timespec * ts;
+#else	/*FSL_1588 */
 #if defined(SO_TIMESTAMPNS)
 	struct timespec * ts;
 #elif defined(SO_BINTIME)
 	struct bintime * bt;
 	struct timespec ts;
 #endif
+#endif	/*FSL_1588 */
 	
 #if defined(SO_TIMESTAMP)
 	struct timeval * tv;
@@ -747,6 +780,27 @@ netRecvEvent(Octet * buf, TimeInternal * time, NetPath * netPath)
 	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
 	     cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		if (cmsg->cmsg_level == SOL_SOCKET) {
+#if defined(FSL_1588)
+			if(cmsg->cmsg_type == SCM_TIMESTAMPING) {
+				ts = (struct timespec *)CMSG_DATA(cmsg);
+				//printf("SO_TIMESTAMPING ");
+				//printf("SW %ld.%09ld ",
+				//       (long)ts->tv_sec,
+				//      (long)ts->tv_nsec);
+				ts++;
+				//printf("HW transformed %ld.%09ld ",
+				//       (long)ts->tv_sec,
+				//       (long)ts->tv_nsec);
+				ts++;
+				//printf("HW raw %ld.%09ld\n",
+				//       (long)ts->tv_sec,
+				//       (long)ts->tv_nsec);
+				time->seconds = ts->tv_sec;
+				time->nanoseconds = ts->tv_nsec;
+				timestampValid = TRUE;
+				break;
+			}
+#else	/* FSL_1588 */
 #if defined(SO_TIMESTAMPNS)
 			if(cmsg->cmsg_type == SCM_TIMESTAMPNS) {
 				ts = (struct timespec *)CMSG_DATA(cmsg);
@@ -769,6 +823,7 @@ netRecvEvent(Octet * buf, TimeInternal * time, NetPath * netPath)
 				break;
 			}
 #endif
+#endif	/* FSL_1588 */
 			
 #if defined(SO_TIMESTAMP)
 			if(cmsg->cmsg_type == SCM_TIMESTAMP) {
@@ -821,17 +876,25 @@ netRecvGeneral(Octet * buf, TimeInternal * time, NetPath * netPath)
 	
 	union {
 		struct cmsghdr cm;
+#if defined(FSL_1588)
+		char	control[3*CMSG_SPACE(sizeof(struct timeval))];
+#else
 		char	control[CMSG_SPACE(sizeof(struct timeval))];
+#endif
 	}     cmsg_un;
 	
 	struct cmsghdr *cmsg;
 	
+#if defined(FSL_1588)
+	struct timespec * ts;
+#else	/* FSL_1588 */
 #if defined(SO_TIMESTAMPNS)
 	struct timespec * ts;
 #elif defined(SO_BINTIME)
 	struct bintime * bt;
 	struct timespec ts;
 #endif
+#endif	/* FSL_1588 */
 	
 #if defined(SO_TIMESTAMP)
 	struct timeval * tv;
@@ -893,6 +956,27 @@ netRecvGeneral(Octet * buf, TimeInternal * time, NetPath * netPath)
 	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
 	     cmsg = CMSG_NXTHDR(&msg, cmsg)) {
 		if (cmsg->cmsg_level == SOL_SOCKET) {
+#if defined(FSL_1588)
+			if(cmsg->cmsg_type == SCM_TIMESTAMPING) {
+				ts = (struct timespec *)CMSG_DATA(cmsg);
+				//printf("SO_TIMESTAMPING ");
+				//printf("SW %ld.%09ld ",
+				//       (long)ts->tv_sec,
+				//       (long)ts->tv_nsec);
+				ts++;
+				//printf("HW transformed %ld.%09ld ",
+				//       (long)ts->tv_sec,
+				//       (long)ts->tv_nsec);
+				ts++;
+				//printf("HW raw %ld.%09ld\n",
+				//       (long)ts->tv_sec,
+				//       (long)ts->tv_nsec);
+				time->seconds = ts->tv_sec;
+				time->nanoseconds = ts->tv_nsec;
+				timestampValid = TRUE;
+				break;
+			}
+#else	/* FSL_1588 */
 #if defined(SO_TIMESTAMPNS)
 			if(cmsg->cmsg_type == SCM_TIMESTAMPNS) {
 				ts = (struct timespec *)CMSG_DATA(cmsg);
@@ -915,6 +999,7 @@ netRecvGeneral(Octet * buf, TimeInternal * time, NetPath * netPath)
 				break;
 			}
 #endif
+#endif	/* FSL_1588 */
 			
 #if defined(SO_TIMESTAMP)
 			if(cmsg->cmsg_type == SCM_TIMESTAMP) {
@@ -960,6 +1045,9 @@ netSendEvent(Octet * buf, UInteger16 length, NetPath * netPath, Integer32 alt_ds
 {
 	ssize_t ret;
 	struct sockaddr_in addr;
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);//HWTSTAMP_TX_ON
+#endif
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_EVENT_PORT);
@@ -1006,6 +1094,9 @@ netSendGeneral(Octet * buf, UInteger16 length, NetPath * netPath, Integer32 alt_
 {
 	ssize_t ret;
 	struct sockaddr_in addr;
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);//HWTSTAMP_TX_ON
+#endif
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_GENERAL_PORT);
@@ -1041,6 +1132,9 @@ netSendPeerGeneral(Octet * buf, UInteger16 length, NetPath * netPath)
 
 	ssize_t ret;
 	struct sockaddr_in addr;
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);//HWTSTAMP_TX_ON
+#endif
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_GENERAL_PORT);
@@ -1072,6 +1166,9 @@ netSendPeerEvent(Octet * buf, UInteger16 length, NetPath * netPath)
 {
 	ssize_t ret;
 	struct sockaddr_in addr;
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);//HWTSTAMP_TX_ON
+#endif
 
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_EVENT_PORT);

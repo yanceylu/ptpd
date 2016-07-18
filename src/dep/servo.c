@@ -565,8 +565,13 @@ updateClock(RunTimeOpts * rtOpts, PtpClock * ptpClock)
 		
 		/* the accumulator for the I component */
 		// original PI servo
+#if defined(FSL_1588)
+		ptpClock->observed_drift +=
+			ptpClock->offsetFromMaster.nanoseconds * 0.05;
+#else
 		ptpClock->observed_drift += 
 			ptpClock->offsetFromMaster.nanoseconds / ai;
+#endif
 
 		// ADJ_FREQ_MAX: 512 000
 
@@ -576,8 +581,13 @@ updateClock(RunTimeOpts * rtOpts, PtpClock * ptpClock)
 		else if (ptpClock->observed_drift < -ADJ_FREQ_MAX)
 			ptpClock->observed_drift = -ADJ_FREQ_MAX;
 
+#if defined(FSL_1588)
+		adj = ptpClock->offsetFromMaster.nanoseconds * 0.32 +
+			ptpClock->observed_drift;
+#else
 		adj = ptpClock->offsetFromMaster.nanoseconds / ap +
 			ptpClock->observed_drift;
+#endif
 
 		DBG("     Observed_drift with AI component: %d\n",
 			ptpClock->observed_drift  );

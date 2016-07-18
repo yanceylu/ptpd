@@ -46,6 +46,12 @@ PROG = ptpd2
 SRCS = ptpd.c arith.c bmc.c protocol.c display.c\
 	dep/msg.c dep/net.c dep/servo.c dep/startup.c dep/sys.c dep/timer.c
 
+#FSL_1588
+CFLAGS += -DFSL_1588
+SRCS += fsl_1588.o
+HDRS = fsl_1588.h
+#FSL_1588
+
 OBJS = $(SRCS:.c=.o)
 
 HDRS = ptpd.h constants.h datatypes.h \

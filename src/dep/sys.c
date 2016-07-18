@@ -51,6 +51,10 @@
 #  include <some ether header>  // force build error
 #endif
 
+#if defined(FSL_1588)
+#include "../fsl_1588.h"
+#endif
+
 
 /* only C99 has the round function built-in */
 double round (double __x);
@@ -376,7 +380,14 @@ message(int priority, const char * format, ...)
 		 * it also can cause problems in nested debug statements (which are solved by turning the signal
 		 *  handling synchronous, and not calling this function inside assycnhonous signal processing)
 		 */
+#if defined(FSL_1588)
+		struct timespec tp;
+		clock_gettime(clkid,&tp);
+		now.tv_sec = tp.tv_sec;
+		now.tv_usec = tp.tv_nsec / 1000;
+#else
 		gettimeofday(&now, 0);
+#endif
 		strftime(time_str, MAXTIMESTR, "%X", localtime(&now.tv_sec));
 		fprintf(stderr, "%s.%06d ", time_str, (int)now.tv_usec  );
 		fprintf(stderr, " (%s)  ", G_ptpClock ?
@@ -586,10 +597,20 @@ getTime(TimeInternal * time)
 {
 #if defined(linux) || defined(__APPLE__)
 
+#if defined(FSL_1588)
+	struct timespec tp;
+	if (clock_gettime(clkid, &tp)){
+		perror("clock_gettime");
+		exit(0);
+	}
+	time->seconds = tp.tv_sec;
+	time->nanoseconds = tp.tv_nsec;
+#else
 	struct timeval tv;
 	gettimeofday(&tv, 0);
 	time->seconds = tv.tv_sec;
 	time->nanoseconds = tv.tv_usec * 1000;
+#endif/* FSL_1588 */
 #else
 	struct timespec tp;
 	if (clock_gettime(CLOCK_REALTIME, &tp) < 0) {
@@ -604,6 +625,13 @@ getTime(TimeInternal * time)
 void 
 setTime(TimeInternal * time)
 {
+#if defined(FSL_1588)
+	struct timespec tp;
+	tp.tv_sec = time->seconds;
+	tp.tv_nsec = time->nanoseconds;
+	if (clock_settime(clkid, &tp))
+			perror("clock_settime");
+#else
 	struct timeval tv;
  
 	tv.tv_sec = time->seconds;
@@ -613,6 +641,7 @@ setTime(TimeInternal * time)
 	settimeofday(&tv, 0);
 	WARNING("Finished stepping the system clock to %ds %dns\n",
 	       time->seconds, time->nanoseconds);
+#endif
 }
 
 
@@ -660,7 +689,11 @@ adjFreq(Integer32 adj)
 
 	DBG2("        adj is %d;  t freq is %d       (float: %f Integer32: %d)\n", adj, t.freq,  f, t1);
 	
+#if defined(FSL_1588)
+	return !clock_adjtime(clkid, &t);
+#else
 	return !adjtimex(&t);
+#endif
 }
 
 #else

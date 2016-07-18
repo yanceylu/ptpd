@@ -37,6 +37,9 @@
  */
 
 #include "ptpd.h"
+#if defined(FSL_1588)
+#include "fsl_1588.h"
+#endif
 
 Boolean doInit(RunTimeOpts*,PtpClock*);
 void doState(RunTimeOpts*,PtpClock*);
@@ -76,6 +79,22 @@ void addForeign(Octet*,MsgHeader*,PtpClock*);
 void 
 protocol(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 {
+#if defined(FSL_1588)
+	char device[]="/dev/ptp0";
+	int fd;
+	fd = open(device, O_RDWR);
+	if (fd < 0) {
+		fprintf(stderr, "opening %s: %s\n", device, strerror(errno));
+		return;
+	}
+
+	clkid = get_clockid(fd);
+
+	if (CLOCK_INVALID == clkid) {
+		fprintf(stderr, "failed to read clock id\n");
+		return;
+	}
+#endif
 	DBG("event POWERUP\n");
 
 	toState(PTP_INITIALIZING, rtOpts, ptpClock);
@@ -309,9 +328,23 @@ doInit(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 }
 
 /* handle actions and events for 'port_state' */
+#if defined(FSL_1588)
+TimeInternal issueSyncTime = { 0, 0 };
+TimeInternal issueDelayReqTime = { 0, 0 };
+TimeInternal issuePDelayReqTime = { 0, 0 };
+TimeInternal issuePDelayRespTime = { 0, 0 };
+int issueSyncFlag = 0;
+int issueDelayReqFlag = 0;
+int issuePDelayReqFlag = 0;
+int issuePDelayRespFlag = 0;
+#endif
+
 void 
 doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 {
+#if defined(FSL_1588)
+	ssize_t length = 0;
+#endif
 	UInteger8 state;
 	
 	ptpClock->message_activity = FALSE;
@@ -354,6 +387,29 @@ doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 	case PTP_SLAVE:
 	// passive mode behaves like the SLAVE state, in order to wait for the announce timeout of the current active master
 	case PTP_PASSIVE:
+#if defined(FSL_1588)
+		if (issueDelayReqFlag == 1)
+		{
+			issueDelayReqFlag = 0;
+			ptpClock->waitingForDelayResp = TRUE;
+			ptpClock->delay_req_send_time.seconds =
+				issueDelayReqTime.seconds;
+			ptpClock->delay_req_send_time.nanoseconds =
+				issueDelayReqTime.nanoseconds;
+		}
+		if (issuePDelayReqFlag == 1)
+		{
+			issuePDelayReqFlag = 0;
+			ptpClock->pdelay_req_send_time.seconds =
+				issuePDelayReqTime.seconds;
+			ptpClock->pdelay_req_send_time.nanoseconds =
+				issuePDelayReqTime.nanoseconds;
+		}
+		if (ptpClock->twoStepFlag && issuePDelayRespFlag == 1) {
+			issuePDelayRespFlag = 0;
+			issuePDelayRespFollowUp(&issuePDelayRespTime, &ptpClock->PdelayReqHeader, rtOpts, ptpClock);
+		}
+#endif
 		handle(rtOpts, ptpClock);
 		
 		/*
@@ -390,13 +446,37 @@ doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 			if(timerExpired(DELAYREQ_INTERVAL_TIMER,
 					ptpClock->itimer)) {
 				DBG2("event DELAYREQ_INTERVAL_TIMEOUT_EXPIRES\n");
+#if defined(FSL_1588)
+				hwtstamp_rx_init(&ptpClock->netPath, FALSE);//SOF_TIMESTAMPING_TX_HARDWARE
 				issueDelayReq(rtOpts,ptpClock);
+				usleep(1);
+				length = hwtstamp_tx_get(ptpClock->msgIbuf, &issueDelayReqTime, &ptpClock->netPath);
+				hwtstamp_rx_init(&ptpClock->netPath, TRUE);//SOF_TIMESTAMPING_RX_HARDWARE
+				if(length > 0)
+					issueDelayReqFlag = 1;
+				else
+					toState(PTP_FAULTY, rtOpts, ptpClock);
+#else
+				issueDelayReq(rtOpts,ptpClock);
+#endif
 			}
 		} else if (ptpClock->delayMechanism == P2P) {
 			if (timerExpired(PDELAYREQ_INTERVAL_TIMER,
 					ptpClock->itimer)) {
 				DBGV("event PDELAYREQ_INTERVAL_TIMEOUT_EXPIRES\n");
+#if defined(FSL_1588)
+				hwtstamp_rx_init(&ptpClock->netPath, FALSE);//SOF_TIMESTAMPING_TX_HARDWARE
 				issuePDelayReq(rtOpts,ptpClock);
+				usleep(1);
+				length = hwtstamp_tx_get(ptpClock->msgIbuf, &issuePDelayReqTime, &ptpClock->netPath);
+				hwtstamp_rx_init(&ptpClock->netPath, TRUE);//SOF_TIMESTAMPING_RX_HARDWARE
+				if(length > 0)
+					issuePDelayReqFlag = 1;
+				else
+					toState(PTP_FAULTY, rtOpts, ptpClock);
+#else
+				issuePDelayReq(rtOpts,ptpClock);
+#endif
 			}
 
 			/* FIXME: Path delay should also rearm its timer with the value received from the Master */
@@ -414,7 +494,19 @@ doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 	
 		if (timerExpired(SYNC_INTERVAL_TIMER, ptpClock->itimer)) {
 			DBGV("event SYNC_INTERVAL_TIMEOUT_EXPIRES\n");
+#if defined(FSL_1588)
+			hwtstamp_rx_init(&ptpClock->netPath, FALSE);//SOF_TIMESTAMPING_TX_HARDWARE
 			issueSync(rtOpts, ptpClock);
+			usleep(1);
+			length = hwtstamp_tx_get(ptpClock->msgIbuf, &issueSyncTime, &ptpClock->netPath);
+			hwtstamp_rx_init(&ptpClock->netPath, TRUE);//SOF_TIMESTAMPING_RX_HARDWARE
+			if(length > 0)
+				issueSyncFlag = 1;
+			else
+				toState(PTP_FAULTY, rtOpts, ptpClock);
+#else
+			issueSync(rtOpts, ptpClock);
+#endif
 		}
 		
 		if (timerExpired(ANNOUNCE_INTERVAL_TIMER, ptpClock->itimer)) {
@@ -426,9 +518,39 @@ doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 			if (timerExpired(PDELAYREQ_INTERVAL_TIMER,
 					ptpClock->itimer)) {
 				DBGV("event PDELAYREQ_INTERVAL_TIMEOUT_EXPIRES\n");
+#if defined(FSL_1588)
+				hwtstamp_rx_init(&ptpClock->netPath, FALSE);//SOF_TIMESTAMPING_TX_HARDWARE
 				issuePDelayReq(rtOpts,ptpClock);
+				usleep(1);
+				length = hwtstamp_tx_get(ptpClock->msgIbuf, &issuePDelayReqTime, &ptpClock->netPath);
+				hwtstamp_rx_init(&ptpClock->netPath, TRUE);//SOF_TIMESTAMPING_RX_HARDWARE
+				if(length > 0)
+					issuePDelayReqFlag = 1;
+				else
+					toState(PTP_FAULTY, rtOpts, ptpClock);
+#else
+				issuePDelayReq(rtOpts,ptpClock);
+#endif
 			}
 		}
+#if defined(FSL_1588)
+		if(issueSyncFlag == 1 && ptpClock->twoStepFlag){
+			issueSyncFlag = 0;
+			issueFollowup(&issueSyncTime,rtOpts,ptpClock);
+		}
+		if (issuePDelayReqFlag == 1)
+		{
+			issuePDelayReqFlag = 0;
+			ptpClock->pdelay_req_send_time.seconds =
+				issuePDelayReqTime.seconds;
+			ptpClock->pdelay_req_send_time.nanoseconds =
+				issuePDelayReqTime.nanoseconds;
+		}
+		if (ptpClock->twoStepFlag && issuePDelayRespFlag == 1) {
+			issuePDelayRespFlag = 0;
+			issuePDelayRespFollowUp(&issuePDelayRespTime, &ptpClock->PdelayReqHeader, rtOpts, ptpClock);
+		}
+#endif
 		
 		// TODO: why is handle() below expiretimer, while in slave is the opposite
 		handle(rtOpts, ptpClock);
@@ -458,6 +580,9 @@ handle(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 	Boolean isFromSelf;
 	TimeInternal time = { 0, 0 };
 
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(&ptpClock->netPath, FALSE);//HWTSTAMP_TX_OFF
+#endif
 	if (!ptpClock->message_activity) {
 		ret = netSelect(0, &ptpClock->netPath);
 		if (ret < 0) {
@@ -1192,6 +1317,9 @@ handlePDelayReq(MsgHeader *header, Octet *msgIbuf, ssize_t length,
 		TimeInternal *time, Boolean isFromSelf, 
 		RunTimeOpts *rtOpts, PtpClock *ptpClock)
 {
+#if defined(FSL_1588)
+	ssize_t length1 = 0;
+#endif
 	if (ptpClock->delayMechanism == P2P) {
 		DBGV("PdelayReq message received : \n");
 
@@ -1231,8 +1359,20 @@ handlePDelayReq(MsgHeader *header, Octet *msgIbuf, ssize_t length,
 			} else {
 				msgUnpackHeader(ptpClock->msgIbuf,
 						&ptpClock->PdelayReqHeader);
+#if defined(FSL_1588)
+				hwtstamp_rx_init(&ptpClock->netPath, FALSE);//SOF_TIMESTAMPING_TX_HARDWARE
+				issuePDelayResp(time, header, rtOpts, ptpClock);
+				usleep(1);//important
+				length1 = hwtstamp_tx_get(ptpClock->msgIbuf, &issuePDelayRespTime, &ptpClock->netPath);
+				hwtstamp_rx_init(&ptpClock->netPath, TRUE);//SOF_TIMESTAMPING_RX_HARDWARE
+				if(length1 > 0)
+					issuePDelayRespFlag = 1;
+				else
+					toState(PTP_FAULTY, rtOpts, ptpClock);
+#else
 				issuePDelayResp(time, header, rtOpts, 
 						ptpClock);	
+#endif
 				break;
 			}
 		default:
