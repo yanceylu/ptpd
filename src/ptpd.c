@@ -78,6 +78,21 @@ main(int argc, char **argv)
 	PtpClock *ptpClock;
 	Integer16 ret;
 
+#if defined(FSL_1588)
+	char device[] = "/dev/ptp0";
+	int fd;
+
+	fd = open(device, O_RDWR);
+	if (fd < 0) {
+		fprintf(stderr, "opening %s: %s\n", device, strerror(errno));
+		return -1;
+	}
+	clkid = get_clockid(fd);
+	if (clkid == -1) {
+		fprintf(stderr, "failed to read clock id\n");
+		return -1;
+	}
+#endif
 	startupInProgress = TRUE;
 
 	/* Initialize run time options with command line arguments */
