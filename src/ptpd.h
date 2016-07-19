@@ -127,6 +127,13 @@
 #include <linux/rtc.h>
 #endif /* HAVE_LINUX_RTC_H */
 
+#ifdef FSL_1588
+#ifndef SO_TIMESTAMPING
+#define SO_TIMESTAMPING 37
+#endif
+clockid_t clkid;
+#endif
+
 /** \name arith.c
  * -Timing management and arithmetic*/
  /**\{*/
