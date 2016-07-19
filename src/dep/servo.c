@@ -914,10 +914,12 @@ if(rtOpts->ntpOptions.enableEngine && rtOpts->panicModeNtp) {
 #endif /*PTPD_STATISTICS */
 		/* Adjust the clock first -> the PI controller runs here */
 		adjFreq_wrapper(rtOpts, ptpClock, runPIservo(&ptpClock->servo, ptpClock->offsetFromMaster.nanoseconds));
+#ifndef FSL_1588
 		/* Unset STA_UNSYNC */
 		unsetTimexFlags(STA_UNSYNC, TRUE);
 		/* "Tell" the clock about maxerror, esterror etc. */
 		informClockSource(ptpClock);
+#endif /* FSL_1588 */
 #endif /* __APPLE__ */
 	}
 

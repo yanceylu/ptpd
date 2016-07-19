@@ -23,7 +23,7 @@
 #endif
 
 
-
+#define FSL_1588 1
 
  /** \name System messages*/
  /**\{*/
@@ -291,6 +291,11 @@ UInteger16 msgPackManagementResponse(Octet * buf,MsgHeader*,MsgManagement*,PtpCl
  * -Init network stuff, send and receive datas*/
  /**\{*/
 
+#if defined(FSL_1588)
+extern char fsl_1588_if_name[IFACE_NAME_LENGTH];
+/* select HWTSTAMP_TX_ON or HWTSTAMP_TX_OFF */
+void hwtstamp_tx_ctl(NetPath *netPath, Boolean enable);
+#endif
 Boolean testInterface(char* ifaceName);
 Boolean netInit(NetPath*,RunTimeOpts*,PtpClock*);
 UInteger32 findIface(Octet * ifaceName, UInteger8 * communicationTechnology, Octet * uuid, NetPath * netPath);
@@ -370,6 +375,10 @@ void logStatistics(RunTimeOpts *rtOpts, PtpClock *ptpClock);
 void displayStatus(PtpClock *ptpClock, const char *prefixMessage);
 void displayPortIdentity(PortIdentity *port, const char *prefixMessage);
 Boolean nanoSleep(TimeInternal*);
+#if defined(FSL_1588)
+clockid_t get_clockid(int fd);
+int clock_adjtime(clockid_t id, struct timex *tx);
+#endif
 void getTime(TimeInternal*);
 void setTime(TimeInternal*);
 #ifdef linux
@@ -393,12 +402,14 @@ void adjTime(Integer32);
 void adjFreq_wrapper(RunTimeOpts * rtOpts, PtpClock * ptpClock, double adj);
 Boolean adjFreq(double);
 double getAdjFreq(void);
+#ifndef FSL_1588
 void informClockSource(PtpClock* ptpClock);
-
+#endif
 /* Observed drift save / recovery functions */
 void restoreDrift(PtpClock * ptpClock, RunTimeOpts * rtOpts, Boolean quiet);
 void saveDrift(PtpClock * ptpClock, RunTimeOpts * rtOpts, Boolean quiet);
 
+#ifndef FSL_1588
 /* Helper function to manage ntpadjtime / adjtimex flags */
 void setTimexFlags(int flags, Boolean quiet);
 void unsetTimexFlags(int flags, Boolean quiet);
@@ -408,7 +419,7 @@ Boolean checkTimexFlags(int flags);
 #if defined(MOD_TAI) &&  NTP_API == 4
 void setKernelUtcOffset(int utc_offset);
 #endif /* MOD_TAI */
-
+#endif /* FSL_1588 */
 #endif /* apple */
 
 /** \}*/

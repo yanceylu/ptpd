@@ -243,6 +243,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
         ptpClock->timePropertiesDS.ptpTimescale = IS_SET(header->flagField1, PTPT);
         ptpClock->timePropertiesDS.timeSource = announce->timeSource;
 
+#ifndef FSL_1588
 #if defined(MOD_TAI) &&  NTP_API == 4
 	/*
 	 * update kernel TAI offset, but only if timescale is
@@ -255,6 +256,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 		INFO("Set kernel UTC offset to %d\n", ptpClock->timePropertiesDS.currentUtcOffset);
         }
 #endif /* MOD_TAI */
+#endif /* FSL_1588 */
 
 	/* Leap second handling */
 
@@ -274,9 +276,11 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 			ptpClock->leapSecondPending = FALSE;
 			ptpClock->leapSecondInProgress = FALSE;
 			timerStop(LEAP_SECOND_PAUSE_TIMER, ptpClock->itimer);
+#ifndef FSL_1588
 #if !defined(__APPLE__)
 			unsetTimexFlags(STA_INS | STA_DEL,TRUE);
 #endif /* apple */
+#endif /* FSL_1588 */
 		}
 
 		/*
@@ -288,6 +292,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 		    !ptpClock->leapSecondInProgress ) ||
 		    ((!previousLeap59 && ptpClock->timePropertiesDS.leap59) ||
 		    (!previousLeap61 && ptpClock->timePropertiesDS.leap61)))) {
+#ifndef FSL_1588
 #if !defined(__APPLE__)
 			WARNING("Leap second pending! Setting kernel to %s "
 				"one second at midnight\n",
@@ -303,6 +308,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 				"API support - expect a clock jump at "
 				"midnight!\n");
 #endif /* apple */
+#endif /* FSL_1588 */
 			/* only set the flag, the rest happens in doState() */
 			ptpClock->leapSecondPending = TRUE;
 		}
