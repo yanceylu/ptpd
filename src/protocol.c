@@ -589,6 +589,7 @@ if(!rtOpts->panicModeNtp || !ptpClock->panicMode)
 		timerStart(STATISTICS_UPDATE_TIMER, rtOpts->statsUpdateInterval, ptpClock->itimer);
 #endif /* PTPD_STATISTICS */
 
+#ifndef FSL_1588
 #ifdef HAVE_SYS_TIMEX_H
 
 		/* 
@@ -606,6 +607,7 @@ if(!rtOpts->panicModeNtp || !ptpClock->panicMode)
 			unsetTimexFlags(STA_INS | STA_DEL, TRUE);
 		}
 #endif /* HAVE_SYS_TIMEX_H */
+#endif /* FSL_1588 */
 		break;
 	default:
 		DBG("to unrecognized state\n");
@@ -901,6 +903,7 @@ doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
                             WARNING("Leap second event imminent - pausing "
 				    "clock and offset updates\n");
                             ptpClock->leapSecondInProgress = TRUE;
+#ifndef FSL_1588
 #ifdef HAVE_SYS_TIMEX_H
                             if(!checkTimexFlags(ptpClock->timePropertiesDS.leap61 ? 
 						STA_INS : STA_DEL)) {
@@ -911,6 +914,7 @@ doState(RunTimeOpts *rtOpts, PtpClock *ptpClock)
 						  STA_INS : STA_DEL, FALSE);
                             }
 #endif /* HAVE_SYS_TIMEX_H */
+#endif /* FSL_1588 */
 			    /*
 			     * start pause timer from now until [pause] after
 			     * midnight, plus an extra second if inserting
@@ -1253,6 +1257,9 @@ handle(RunTimeOpts *rtOpts, PtpClock *ptpClock)
     int ret;
     ssize_t length = -1;
 
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(&ptpClock->netPath, FALSE);/* HWTSTAMP_TX_OFF */
+#endif
     TimeInternal timeStamp = { 0, 0 };
     fd_set readfds;
 
@@ -1400,9 +1407,11 @@ handleAnnounce(MsgHeader *header, ssize_t length,
 					ptpClock->leapSecondInProgress=FALSE;
 					ptpClock->timePropertiesDS.leap59 = FALSE;
 					ptpClock->timePropertiesDS.leap61 = FALSE;
+#ifndef FSL_1588
 #ifdef HAVE_SYS_TIMEX_H
 					unsetTimexFlags(STA_INS | STA_DEL, TRUE);
 #endif /* HAVE_SYS_TIMEX_H */
+#endif /* FSL_1588 */
 				}
 			}
 			DBG2("___ Announce: received Announce from current Master, so reset the Announce timer\n");

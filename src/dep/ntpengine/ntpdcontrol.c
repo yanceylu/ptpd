@@ -170,6 +170,15 @@ get_systime(
 {
         double dtemp;
 
+#if defined(FSL_1588)
+	struct timespec tp;
+	clock_gettime(clkid, &tp);
+	tv.tv_sec = tp.tv_sec;
+	tv.tv_usec = tp.tv_nsec / 1000;
+
+	now->l_i = tv.tv_sec + JAN_1970;
+	dtemp = tv.tv_usec / 1e6;
+#else /* FSL_1588 */
 #if defined(HAVE_CLOCK_GETTIME) || defined(HAVE_GETCLOCK)
         struct timespec ts;     /* seconds and nanoseconds */
 
@@ -195,6 +204,7 @@ get_systime(
         dtemp = tv.tv_usec / 1e6;
 
 #endif /* HAVE_CLOCK_GETTIME || HAVE_GETCLOCK */
+#endif /* FSL_1588 */
 
         /*
          * Renormalize to seconds past 1900 and fraction.

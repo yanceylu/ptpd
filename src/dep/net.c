@@ -85,6 +85,9 @@
 #include <linux/ethtool.h>
 #endif /* SO_TIMESTAMPING */
 
+#if defined(FSL_1588)
+char fsl_1588_if_name[IFACE_NAME_LENGTH];
+#endif
 /**
  * shutdown the IPv4 multicast for specific address
  *
@@ -461,6 +464,9 @@ testInterface(char * ifaceName, RunTimeOpts* rtOpts)
 	if(getInterfaceInfo(ifaceName, &info) != 1)
 		return FALSE;
 
+#if defined(FSL_1588)
+	memcpy(fsl_1588_if_name, ifaceName, IFACE_NAME_LENGTH);
+#endif
 	switch(rtOpts->transport) {
 
 	    case UDP_IPV4:
@@ -665,6 +671,27 @@ end:
 }
 #endif /* SO_TIMESTAMPING */
 
+#if defined(FSL_1588)
+/* select HWTSTAMP_TX_ON or HWTSTAMP_TX_OFF */
+void hwtstamp_tx_ctl(NetPath *netPath, Boolean enable)
+{
+	struct ifreq hwtstamp;
+	struct hwtstamp_config hwconfig;
+
+	memset(&hwtstamp, 0, sizeof(hwtstamp));
+	strncpy(hwtstamp.ifr_name, fsl_1588_if_name, sizeof(hwtstamp.ifr_name));
+	hwtstamp.ifr_data = (void *)&hwconfig;
+	memset(&hwconfig, 0, sizeof(hwconfig));
+	hwconfig.tx_type =
+		enable ?
+		HWTSTAMP_TX_ON : HWTSTAMP_TX_OFF;
+	hwconfig.rx_filter = HWTSTAMP_FILTER_PTP_V1_L4_SYNC;
+	if (ioctl(netPath->eventSock, SIOCSHWTSTAMP, &hwtstamp) < 0
+		|| ioctl(netPath->generalSock, SIOCSHWTSTAMP, &hwtstamp) < 0)
+			printf("error:hwtstamp_tx_ctl\n");
+}
+#endif
+
 
 /**
  * Initialize timestamping of packets
@@ -681,10 +708,17 @@ netInitTimestamping(NetPath * netPath, RunTimeOpts * rtOpts)
 	Boolean result = TRUE;
 #if defined(SO_TIMESTAMPING) && defined(SO_TIMESTAMPNS)/* Linux - current API */
 	DBG("netInitTimestamping: trying to use SO_TIMESTAMPING\n");
+#if defined(FSL_1588)
+	val = SOF_TIMESTAMPING_TX_HARDWARE |
+	    SOF_TIMESTAMPING_RX_HARDWARE |
+	    SOF_TIMESTAMPING_RAW_HARDWARE;
+#else
 	val = SOF_TIMESTAMPING_TX_SOFTWARE |
 	    SOF_TIMESTAMPING_RX_SOFTWARE |
 	    SOF_TIMESTAMPING_SOFTWARE;
+#endif
 
+#ifndef FSL_1588
 /* unless compiled with PTPD_EXPERIMENTAL, check if we support the desired tstamp capabilities */
 #ifndef PTPD_EXPERIMENTAL
 #ifdef ETHTOOL_GET_TS_INFO
@@ -715,6 +749,7 @@ netInitTimestamping(NetPath * netPath, RunTimeOpts * rtOpts)
 	val = 1;
 #endif /* ETHTOOL_GET_TS_INFO */
 #endif /* PTPD_EXPERIMENTAL */
+#endif /* FSL_1588 */
 
 	if(val == 1) {
 	    if (setsockopt(netPath->eventSock, SOL_SOCKET, SO_TIMESTAMPNS, &val, sizeof(int)) < 0) {
@@ -901,6 +936,9 @@ netInit(NetPath * netPath, RunTimeOpts * rtOpts, PtpClock * ptpClock)
 
 	DBG("Listening on IP: %s\n",inet_ntoa(
 		((struct sockaddr_in*)&(netPath->interfaceInfo.afAddress))->sin_addr));
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(&ptpClock->netPath, FALSE);/* HWTSTAMP_TX_OFF */
+#endif
 
 #ifdef PTPD_PCAP
 	if (rtOpts->pcap == TRUE) {
@@ -1318,7 +1356,11 @@ netRecvEvent(Octet * buf, TimeInternal * time, NetPath * netPath, int flags)
 #if defined(SO_TIMESTAMPING) && defined(SO_TIMESTAMPNS)
 				if(cmsg->cmsg_type == SO_TIMESTAMPING || 
 				    cmsg->cmsg_type == SO_TIMESTAMPNS) {
+#if defined(FSL_1588)
+					ts = (struct timespec *)CMSG_DATA(cmsg) + 2;
+#else
 					ts = (struct timespec *)CMSG_DATA(cmsg);
+#endif
 					time->seconds = ts->tv_sec;
 					time->nanoseconds = ts->tv_nsec;
 					timestampValid = TRUE;
@@ -1519,6 +1561,9 @@ netSendEvent(Octet * buf, UInteger16 length, NetPath * netPath,
 	ssize_t ret;
 	struct sockaddr_in addr;
 
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);/* HWTSTAMP_TX_ON */
+#endif
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_EVENT_PORT);
 
@@ -1558,6 +1603,9 @@ netSendEvent(Octet * buf, UInteger16 length, NetPath * netPath,
 				DBG("Error sending unicast event message\n");
 			else
 				netPath->sentPackets++;
+#if defined(FSL_1588)
+			usleep(100);
+#endif
 #ifndef SO_TIMESTAMPING
 			/* 
 			 * Need to forcibly loop back the packet since
@@ -1573,10 +1621,14 @@ netSendEvent(Octet * buf, UInteger16 length, NetPath * netPath,
 #else
 			if(!netPath->txTimestampFailure) {
 				if(!getTxTimestamp(netPath, tim)) {
+#if defined(FSL_1588)
+					printf("getTxTimestamp: get tx timestamp error\n");
+#else
 					netPath->txTimestampFailure = TRUE;
 					if (tim) {
 						clearTime(tim);
 					}
+#endif
 				}
 			}
 
@@ -1608,9 +1660,15 @@ netSendEvent(Octet * buf, UInteger16 length, NetPath * netPath,
 				DBG("Error sending multicast event message\n");
 			else
 				netPath->sentPackets++;
+#if defined(FSL_1588)
+			usleep(100);
+#endif
 #ifdef SO_TIMESTAMPING
 			if(!netPath->txTimestampFailure) {
 				if(!getTxTimestamp(netPath, tim)) {
+#if defined(FSL_1588)
+					printf("getTxTimestamp: get tx timestamp error\n");
+#else
 					if (tim) {
 						clearTime(tim);
 					}
@@ -1619,6 +1677,7 @@ netSendEvent(Octet * buf, UInteger16 length, NetPath * netPath,
 
 					/* Try re-enabling MULTICAST_LOOP */
 					netSetMulticastLoopback(netPath, TRUE);
+#endif
 				}
 			}
 #endif /* SO_TIMESTAMPING */
@@ -1637,6 +1696,9 @@ netSendGeneral(Octet * buf, UInteger16 length, NetPath * netPath,
 	ssize_t ret;
 	struct sockaddr_in addr;
 
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);/* HWTSTAMP_TX_ON */
+#endif
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_GENERAL_PORT);
 
@@ -1706,6 +1768,9 @@ netSendPeerGeneral(Octet * buf, UInteger16 length, NetPath * netPath, RunTimeOpt
 	ssize_t ret;
 	struct sockaddr_in addr;
 
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);/* HWTSTAMP_TX_ON */
+#endif
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_GENERAL_PORT);
 
@@ -1761,6 +1826,9 @@ netSendPeerEvent(Octet * buf, UInteger16 length, NetPath * netPath, RunTimeOpts 
 	ssize_t ret;
 	struct sockaddr_in addr;
 
+#if defined(FSL_1588)
+	hwtstamp_tx_ctl(netPath, TRUE);/* HWTSTAMP_TX_ON */
+#endif
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(PTP_EVENT_PORT);
 
@@ -1787,6 +1855,9 @@ netSendPeerEvent(Octet * buf, UInteger16 length, NetPath * netPath, RunTimeOpts 
 			DBG("Error sending unicast peer event message\n");
 		else
 			netPath->sentPackets++;
+#if defined(FSL_1588)
+		usleep(100);
+#endif
 
 #ifndef SO_TIMESTAMPING
 		/* 
@@ -1803,10 +1874,14 @@ netSendPeerEvent(Octet * buf, UInteger16 length, NetPath * netPath, RunTimeOpts 
 #else
 		if(!netPath->txTimestampFailure) {
 			if(!getTxTimestamp(netPath, tim)) {
+#if defined(FSL_1588)
+				printf("getTxTimestamp: get tx timestamp error\n");
+#else
 				netPath->txTimestampFailure = TRUE;
 				if (tim) {
 					clearTime(tim);
 				}
+#endif
 			}
 		}
 
@@ -1838,9 +1913,15 @@ netSendPeerEvent(Octet * buf, UInteger16 length, NetPath * netPath, RunTimeOpts 
 			DBG("Error sending multicast peer event message\n");
 		else
 			netPath->sentPackets++;
+#if defined(FSL_1588)
+		usleep(100);
+#endif
 #ifdef SO_TIMESTAMPING
 		if(!netPath->txTimestampFailure) {
 			if(!getTxTimestamp(netPath, tim)) {
+#if defined(FSL_1588)
+				printf("getTxTimestamp: get tx timestamp error\n");
+#else
 				if (tim) {
 					clearTime(tim);
 				}
@@ -1849,6 +1930,7 @@ netSendPeerEvent(Octet * buf, UInteger16 length, NetPath * netPath, RunTimeOpts 
 
 				/* Try re-enabling MULTICAST_LOOP */
 				netSetMulticastLoopback(netPath, TRUE);
+#endif
 			}
 		}
 #endif /* SO_TIMESTAMPING */

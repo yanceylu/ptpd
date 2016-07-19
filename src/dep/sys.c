@@ -344,7 +344,14 @@ int writeMessage(FILE* destination, int priority, const char * format, va_list a
 		 * it also can cause problems in nested debug statements (which are solved by turning the signal
 		 *  handling synchronous, and not calling this function inside asycnhronous signal processing)
 		 */
+#if defined(FSL_1588)
+		struct timespec tp;
+		clock_gettime(clkid, &tp);
+		now.tv_sec = tp.tv_sec;
+		now.tv_usec = tp.tv_nsec / 1000;
+#else
 		gettimeofday(&now, 0);
+#endif
 		strftime(time_str, MAXTIMESTR, "%F %X", localtime((time_t*)&now.tv_sec));
 		fprintf(destination, "%s.%06d ", time_str, (int)now.tv_usec  );
 		fprintf(destination,PTPD_PROGNAME"[%d].%s (%-9s ",
@@ -1174,13 +1181,33 @@ nanoSleep(TimeInternal * t)
 	return TRUE;
 }
 
+#if defined(FSL_1588)
+clockid_t get_clockid(int fd)
+{
+#define CLOCKFD 3
+#define FD_TO_CLOCKID(fd)       ((~(clockid_t) (fd) << 3) | CLOCKFD)
+	return FD_TO_CLOCKID(fd);
+}
+
+/* When glibc offers the syscall, this will go away. */
+#include <sys/syscall.h>
+int clock_adjtime(clockid_t id, struct timex *tx)
+{
+	return syscall(__NR_clock_adjtime, id, tx);
+}
+#endif
+
 void
 getTime(TimeInternal * time)
 {
-#if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0)
+#if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0) || defined(FSL_1588)
 
 	struct timespec tp;
+#if defined(FSL_1588)
+	if (clock_gettime(clkid, &tp) < 0) {
+#else
 	if (clock_gettime(CLOCK_REALTIME, &tp) < 0) {
+#endif
 		PERROR("clock_gettime() failed, exiting.");
 		exit(0);
 	}
@@ -1201,7 +1228,7 @@ void
 setTime(TimeInternal * time)
 {
 
-#if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0)
+#if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0) || defined(FSL_1588)
 
 	struct timespec tp;
 	tp.tv_sec = time->seconds;
@@ -1215,9 +1242,13 @@ setTime(TimeInternal * time)
 
 #endif /* _POSIX_TIMERS */
 
-#if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0)
 
+#if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0) || defined(FSL_1588)
+#if defined(FSL_1588)
+	if (clock_settime(clkid, &tp) < 0) {
+#else
 	if (clock_settime(CLOCK_REALTIME, &tp) < 0) {
+#endif
 		PERROR("Could not set system time");
 		return;
 	}
@@ -1595,7 +1626,11 @@ adjFreq(double adj)
 #endif /* HAVE_STRUCT_TIMEX_TICK */
 	DBG2("        adj is %.09f;  t freq is %d       (float: %.09f)\n", adj, t.freq,  dFreq);
 	
+#if defined(FSL_1588)
+	return !clock_adjtime(clkid, &t);
+#else
 	return !adjtimex(&t);
+#endif
 }
 
 
@@ -1609,7 +1644,11 @@ getAdjFreq(void)
 
 	memset(&t, 0, sizeof(t));
 	t.modes = 0;
+#if defined(FSL_1588)
+	clock_adjtime(clkid, &t);
+#else
 	adjtimex(&t);
+#endif
 
 	dFreq = (t.freq + 0.0) / ((1<<16) / 1000.0);
 
@@ -1764,6 +1803,7 @@ saveDrift(PtpClock * ptpClock, RunTimeOpts * rtOpts, Boolean quiet)
 	fclose(driftFP);
 }
 
+#ifndef FSL_1588
 void
 setTimexFlags(int flags, Boolean quiet)
 {
@@ -1922,6 +1962,7 @@ setKernelUtcOffset(int utc_offset) {
 	}
 }
 #endif /* MOD_TAI */
+#endif /* FSL_1588 */
 
 
 #else

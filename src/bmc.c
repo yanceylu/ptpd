@@ -249,6 +249,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
         ptpClock->timePropertiesDS.ptpTimescale = IS_SET(header->flagField1, PTPT);
         ptpClock->timePropertiesDS.timeSource = announce->timeSource;
 
+#ifndef FSL_1588
 #if defined(MOD_TAI) &&  NTP_API == 4
 	/*
 	 * update kernel TAI offset, but only if timescale is
@@ -261,6 +262,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 		INFO("Set kernel UTC offset to %d\n", ptpClock->timePropertiesDS.currentUtcOffset);
         }
 #endif /* MOD_TAI */
+#endif
 
 	/* Leap second handling */
 
@@ -280,9 +282,11 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 			ptpClock->leapSecondPending = FALSE;
 			ptpClock->leapSecondInProgress = FALSE;
 			timerStop(LEAP_SECOND_PAUSE_TIMER, ptpClock->itimer);
+#ifndef FSL_1588
 #ifdef HAVE_SYS_TIMEX_H
 			unsetTimexFlags(STA_INS | STA_DEL,TRUE);
 #endif /* HAVE_SYS_TIMEX_H */
+#endif /* FSL_1588 */
 		}
 
 		/*
@@ -295,6 +299,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 		    ((!previousLeap59 && ptpClock->timePropertiesDS.leap59) ||
 		    (!previousLeap61 && ptpClock->timePropertiesDS.leap61)))) {
 #ifdef HAVE_SYS_TIMEX_H
+#ifndef FSL_1588
 			WARNING("Leap second pending! Setting kernel to %s "
 				"one second at midnight\n",
 				ptpClock->timePropertiesDS.leap61 ? "add" : "delete");
@@ -304,6 +309,7 @@ void s1(MsgHeader *header,MsgAnnounce *announce,PtpClock *ptpClock, const RunTim
 			    setTimexFlags(ptpClock->timePropertiesDS.leap61 ? STA_INS : STA_DEL,
 					  FALSE);
 		    }
+#endif
 #else
 			WARNING("Leap second pending! No kernel leap second "
 				"API support - expect a clock jump at "
